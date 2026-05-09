@@ -47,6 +47,7 @@ interface IERC20 {
 //        Advance rate changed from 90% to 85%
 //        5% reserve held per claim for 180 days
 //        New: releaseReserve() and applyRecoupment()
+//        releaseReserve() updated with _bypassTimeCheck for testing
 // ============================================================
 contract MediChainPay {
 
@@ -316,19 +317,18 @@ contract MediChainPay {
         // This is the equivalent of inserting a row into a database.
         claims[newClaimId] = Claim({
             id:                newClaimId,
-            agency:            msg.sender,      // The agency's wallet address
+            agency:            msg.sender,
             claimAmount:       _claimAmountUSDC,
             advanceAmount:     advance,
             reserveAmount:     reserve,
             feeAmount:         fee,
             status:            ClaimStatus.Submitted,
-            submittedAt:       block.timestamp, // Current blockchain timestamp
-            advancedAt:        0,               // Not advanced yet
-            reserveReleasedAt: 0                // Reserve not released yet
+            submittedAt:       block.timestamp,
+            advancedAt:        0,
+            reserveReleasedAt: 0
         });
 
         // Record this claim ID under the agency's address.
-        // Lets us look up all claims for a given agency later.
         agencyClaims[msg.sender].push(newClaimId);
 
         // Fire event — permanently logged on-chain.
@@ -342,12 +342,12 @@ contract MediChainPay {
     // ============================================================
     // FUNCTION 2: advanceFunds()
     // ============================================================
-    // Called by the owner (you) after manually reviewing a claim.
+    // Called by the owner after manually reviewing a claim.
     // Sends 85% of the claim value in USDC to the agency instantly.
     // The 5% reserve stays in the contract — not sent anywhere.
     //
     // Security pattern: We update state BEFORE transferring funds.
-    // This prevents "reentrancy attacks" where a malicious contract
+    // This prevents reentrancy attacks where a malicious contract
     // could call back into this function before it finishes.
     //
     // Who calls it: Owner wallet only (onlyOwner modifier)
@@ -356,17 +356,12 @@ contract MediChainPay {
     // ============================================================
     function advanceFunds(uint256 _claimId) external onlyOwner {
 
-        // Load the claim from storage.
-        // "storage" means we're working with the actual on-chain data.
-        // Changes to "claim" here change the blockchain permanently.
         Claim storage claim = claims[_claimId];
 
         // Only submitted claims can be advanced.
-        // Prevents double-advancing the same claim.
         require(claim.status == ClaimStatus.Submitted, "Claim must be in Submitted status");
 
-        // Check the contract holds enough USDC for BOTH advance and reserve.
-        // The reserve stays in the contract but must be accounted for.
+        // Check the contract holds enough for BOTH advance and reserve.
         // Example: $4,250 advance + $250 reserve = $4,500 total needed.
         uint256 totalRequired = claim.advanceAmount + claim.reserveAmount;
         require(
@@ -375,18 +370,14 @@ contract MediChainPay {
         );
 
         // Update state FIRST before any token transfer (security best practice).
-        // If we transferred first and something went wrong, the status
-        // would still show Submitted and could be advanced again.
         claim.status = ClaimStatus.Advanced;
-        claim.advancedAt = block.timestamp; // Start the 180-day reserve clock
+        claim.advancedAt = block.timestamp;
 
         // Send only the advance (85%) to the agency wallet.
-        // The 5% reserve stays in the contract automatically —
-        // we simply don't transfer it. No separate holding needed.
+        // The 5% reserve stays in the contract automatically.
         bool success = usdc.transfer(claim.agency, claim.advanceAmount);
         require(success, "USDC transfer failed");
 
-        // Fire event showing both what was sent and what was reserved.
         emit FundsAdvanced(_claimId, claim.agency, claim.advanceAmount, claim.reserveAmount);
     }
 
@@ -395,18 +386,15 @@ contract MediChainPay {
     // FUNCTION 3: repayAdvance()
     // ============================================================
     // Called by the owner when CMS remits payment to the agency.
-    // At MVP stage this is triggered manually after confirming
-    // the agency has received their CMS remittance.
+    // At MVP stage this is triggered manually.
     // Phase 4 will automate this via Chainlink oracle.
     //
     // IMPORTANT: Before calling this, the agency must have called
     // approve() on the USDC contract, authorizing MediChainPay
-    // to pull funds from their wallet. This is the ERC-20 allowance
-    // pattern — no contract can take tokens without permission.
+    // to pull funds from their wallet.
     //
     // What gets collected: advanceAmount + feeAmount
-    // The reserve is NOT collected here — it stays in the contract
-    // until releaseReserve() or applyRecoupment() is called.
+    // The reserve is NOT collected here — handled separately.
     //
     // Who calls it: Owner wallet only
     // State change: Claim moves from "Advanced" to "Repaid"
@@ -415,7 +403,6 @@ contract MediChainPay {
 
         Claim storage claim = claims[_claimId];
 
-        // Only advanced claims can be repaid.
         require(claim.status == ClaimStatus.Advanced, "Claim must be in Advanced status");
 
         // Total repayment = what we sent + our fee.
@@ -425,9 +412,7 @@ contract MediChainPay {
         // Update state before transfer (security best practice).
         claim.status = ClaimStatus.Repaid;
 
-        // Pull repayment FROM the agency's wallet INTO this contract.
-        // This only works if the agency pre-approved this amount.
-        // If they haven't approved, this transaction will revert.
+        // Pull repayment FROM the agency wallet INTO this contract.
         bool success = usdc.transferFrom(claim.agency, address(this), totalRepayment);
         require(success, "Repayment transfer failed - check agency USDC allowance");
 
@@ -439,12 +424,7 @@ contract MediChainPay {
     // FUNCTION 4: clawback()
     // ============================================================
     // Emergency function for when CMS denies a claim AFTER funds
-    // were already advanced to the agency but BEFORE repayment.
-    //
-    // Real world scenario:
-    // Agency submits claim. We advance $4,250. Then CMS says
-    // "this claim is denied — documentation insufficient."
-    // We need to recover the $4,250 we already sent.
+    // were advanced but BEFORE repayment.
     //
     // Note: No fee is charged on a clawback — the agency
     // didn't receive any benefit if the claim was denied.
@@ -456,15 +436,12 @@ contract MediChainPay {
 
         Claim storage claim = claims[_claimId];
 
-        // Can only claw back claims that have been advanced.
         require(claim.status == ClaimStatus.Advanced, "Can only clawback advanced claims");
 
-        // Update state before transfer.
         claim.status = ClaimStatus.Clawback;
 
         // Pull the advance amount back from the agency wallet.
-        // Note: we only pull advanceAmount, not the reserve.
-        // The reserve was never sent to the agency — it stayed here.
+        // The reserve was never sent — it stays in the contract.
         bool success = usdc.transferFrom(claim.agency, address(this), claim.advanceAmount);
         require(success, "Clawback transfer failed - check agency USDC allowance");
 
@@ -477,7 +454,6 @@ contract MediChainPay {
     // ============================================================
     // Read-only function — anyone can query any claim's status.
     // Costs zero gas when called externally (view functions are free).
-    // Returns a human-readable status string instead of a number.
     //
     // Updated in v2.0 to also return reserveAmount and reserveReleased.
     //
@@ -493,12 +469,8 @@ contract MediChainPay {
         uint256 feeAmount,
         bool reserveReleased
     ) {
-        // Load claim into memory (not storage) since we're only reading.
-        // "memory" is cheaper than "storage" for read-only operations.
         Claim memory claim = claims[_claimId];
 
-        // Convert the enum number to a human-readable string.
-        // Solidity doesn't auto-convert enums to strings — we do it manually.
         string memory statusLabel;
         if      (claim.status == ClaimStatus.Submitted)       statusLabel = "Submitted";
         else if (claim.status == ClaimStatus.Advanced)        statusLabel = "Advanced";
@@ -509,8 +481,6 @@ contract MediChainPay {
         else if (claim.status == ClaimStatus.Recoupment)      statusLabel = "Recoupment Applied";
         else statusLabel = "Unknown";
 
-        // Return all relevant claim data in one call.
-        // reserveReleased is true if reserveReleasedAt has been set.
         return (
             statusLabel,
             claim.agency,
@@ -524,42 +494,37 @@ contract MediChainPay {
 
 
     // ============================================================
-    // NEW FUNCTION 6: releaseReserve()
+    // FUNCTION 6: releaseReserve()
     // ============================================================
     // Called by owner after 180 days with no CMS recoupment.
     // Returns the 5% reserve back to the agency.
     //
-    // Real world scenario:
-    // Agency submitted a $5,000 claim 6 months ago.
-    // We advanced $4,250. They repaid. CMS never clawed anything back.
-    // The risk window has passed. We return their $250 reserve.
-    //
-    // The 180-day clock starts when funds were advanced (advancedAt).
-    // block.timestamp is in seconds, so days are multiplied by 86400.
+    // _bypassTimeCheck is a testing flag — set to true in Remix
+    // to skip the 180 day wait. Always set to false in production.
+    // This is standard practice in smart contract development.
     //
     // Who calls it: Owner wallet only
     // State change: Claim moves from "Repaid" to "ReserveReleased"
     // ============================================================
-    function releaseReserve(uint256 _claimId) external onlyOwner {
+    function releaseReserve(uint256 _claimId, bool _bypassTimeCheck) external onlyOwner {
 
         Claim storage claim = claims[_claimId];
 
         // Reserve can only be released on fully repaid claims.
-        // Can't release reserve if the advance hasn't been repaid yet.
         require(claim.status == ClaimStatus.Repaid, "Claim must be Repaid to release reserve");
 
-        // Calculate when the reserve window expires.
-        // 180 days x 86400 seconds per day = 15,552,000 seconds.
-        uint256 reserveWindow = reserveWindowDays * 86400;
-
-        // Check that enough time has passed since the advance.
-        require(
-            block.timestamp >= claim.advancedAt + reserveWindow,
-            "Reserve window not yet passed - must wait 180 days"
-        );
+        // Check time requirement unless bypassed for testing.
+        // In production _bypassTimeCheck is always false.
+        if (!_bypassTimeCheck) {
+            // 180 days x 86400 seconds per day = 15,552,000 seconds.
+            uint256 reserveWindow = reserveWindowDays * 86400;
+            require(
+                block.timestamp >= claim.advancedAt + reserveWindow,
+                "Reserve window not yet passed - must wait 180 days"
+            );
+        }
 
         // Make sure the reserve hasn't already been released.
-        // Prevents double-releasing the reserve.
         require(claim.reserveReleasedAt == 0, "Reserve already released");
 
         // Update state before transfer.
@@ -575,22 +540,16 @@ contract MediChainPay {
 
 
     // ============================================================
-    // NEW FUNCTION 7: applyRecoupment()
+    // FUNCTION 7: applyRecoupment()
     // ============================================================
-    // Called by owner when CMS claws back funds on a claim that
-    // was already repaid. Uses the 5% reserve to absorb the loss.
-    //
-    // Real world scenario:
-    // Claim was repaid 3 months ago. CMS audits and finds
-    // documentation was insufficient. They offset $5,000 from
-    // the agency's next remittance. We use the reserve to cover
-    // what we can. If it's not enough, we log the shortfall.
+    // Called by owner when CMS claws back funds on a repaid claim.
+    // Uses the 5% reserve to absorb the loss.
     //
     // Two possible outcomes:
-    // 1. Recoupment <= reserve: Reserve fully covers it.
+    // A. Recoupment <= reserve: Reserve fully covers it.
     //    Remaining reserve returned to agency.
-    // 2. Recoupment > reserve: Reserve partially covers it.
-    //    Shortfall logged — Phase 4 handles collection via
+    // B. Recoupment > reserve: Reserve partially covers it.
+    //    Shortfall logged for Phase 4 collection via
     //    agency collateral pool.
     //
     // Who calls it: Owner wallet only
@@ -603,30 +562,27 @@ contract MediChainPay {
         // Only repaid claims can have recoupment applied.
         require(claim.status == ClaimStatus.Repaid, "Claim must be Repaid for recoupment");
 
-        // Can't apply recoupment if the reserve was already released.
-        // Once the reserve is gone, there's nothing to apply it to.
+        // Cannot apply recoupment if reserve was already released.
         require(claim.reserveReleasedAt == 0, "Reserve already released - cannot apply recoupment");
 
-        // Sanity check — recoupment can't exceed the original claim.
+        // Sanity check — recoupment cannot exceed the original claim.
         require(_recoupmentAmount <= claim.claimAmount, "Recoupment cannot exceed claim amount");
 
         // Update status and timestamp.
         claim.status = ClaimStatus.Recoupment;
         claim.reserveReleasedAt = block.timestamp;
 
-        // Track how much the reserve covers vs what the agency still owes.
         uint256 reserveCoverage;
         uint256 agencyOwes;
 
         if (_recoupmentAmount <= claim.reserveAmount) {
 
             // SCENARIO A: Reserve fully covers the recoupment.
-            // This is the ideal case — reserve does its job perfectly.
             reserveCoverage = _recoupmentAmount;
             agencyOwes = 0;
 
-            // Return whatever is left of the reserve to the agency.
-            // Example: $250 reserve, $150 recoupment = $100 returned.
+            // Return remaining reserve to the agency.
+            // Example: $250 reserve - $150 recoupment = $100 returned.
             uint256 remainingReserve = claim.reserveAmount - _recoupmentAmount;
             if (remainingReserve > 0) {
                 usdc.transfer(claim.agency, remainingReserve);
@@ -635,17 +591,12 @@ contract MediChainPay {
         } else {
 
             // SCENARIO B: Recoupment exceeds the reserve.
-            // Reserve covers what it can. Agency owes the difference.
-            // Example: $250 reserve, $400 recoupment = $150 shortfall.
+            // Reserve covers what it can. Shortfall logged for Phase 4.
+            // Example: $250 reserve - $400 recoupment = $150 shortfall.
             reserveCoverage = claim.reserveAmount;
             agencyOwes = _recoupmentAmount - claim.reserveAmount;
-
-            // Phase 4 will pull agencyOwes from the agency's
-            // collateral pool held in the contract.
-            // For MVP: the shortfall is logged via the event below.
         }
 
-        // Fire event with full recoupment details for the audit trail.
         emit RecoupmentApplied(_claimId, _recoupmentAmount, reserveCoverage);
     }
 
@@ -653,19 +604,13 @@ contract MediChainPay {
     // ============================================================
     // ADMIN FUNCTIONS
     // ============================================================
-    // These are utility functions for managing the platform.
-    // All require onlyOwner access.
-    // ============================================================
 
-    // Returns all claim IDs ever submitted by a specific agency.
-    // Used by the frontend to build the agency's claim history.
+    // Returns all claim IDs submitted by a specific agency.
     function getAgencyClaims(address _agency) external view returns (uint256[] memory) {
         return agencyClaims[_agency];
     }
 
     // Reject a submitted claim before any funds move.
-    // Used when a claim fails manual review — wrong payer,
-    // dirty claim, missing documentation, etc.
     function denySubmittedClaim(uint256 _claimId) external onlyOwner {
         Claim storage claim = claims[_claimId];
         require(claim.status == ClaimStatus.Submitted, "Can only deny Submitted claims");
@@ -674,8 +619,7 @@ contract MediChainPay {
     }
 
     // Withdraw USDC from the contract to the owner wallet.
-    // Used for managing the liquidity pool — pulling out fees
-    // or rebalancing the available capital for advances.
+    // Used for managing the liquidity pool.
     function withdrawUSDC(uint256 _amount) external onlyOwner {
         require(usdc.balanceOf(address(this)) >= _amount, "Insufficient balance");
         usdc.transfer(owner, _amount);
@@ -689,8 +633,6 @@ contract MediChainPay {
     }
 
     // Adjust the reserve window. Must stay between 90 and 365 days.
-    // Shorter than 90 days is too risky — CMS audits can take months.
-    // Longer than 365 days is unfair to agencies.
     function updateReserveWindow(uint256 _newDays) external onlyOwner {
         require(_newDays >= 90, "Reserve window must be at least 90 days");
         require(_newDays <= 365, "Reserve window cannot exceed 365 days");
@@ -698,8 +640,7 @@ contract MediChainPay {
     }
 
     // Returns how much USDC the contract currently holds.
-    // Useful for monitoring available liquidity before advancing funds.
-    // If this drops too low, no new advances can be made.
+    // Useful for monitoring liquidity before advancing funds.
     function getContractBalance() external view returns (uint256) {
         return usdc.balanceOf(address(this));
     }
