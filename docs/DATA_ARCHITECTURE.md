@@ -203,3 +203,283 @@ The pattern is identical. The infrastructure is different.
 Chainlink Functions is the blockchain equivalent of Azure API Management combined with Azure Logic Apps. It allows smart contracts to make authenticated HTTP requests to external APIs — exactly like Logic App connectors calling REST APIs.
 
 **Azure Pattern:**
+
+```
+Logic App → API Management → Availity REST API
+        ↓
+Response processed → Service Bus triggered → Downstream processing
+```
+
+**MediChain Pay Pattern:**
+
+```
+Chainlink Functions → Availity REST API
+        ↓
+Response processed → On-chain transaction → Smart contract updated
+```
+
+### Availity Integration Design
+
+```javascript
+// Chainlink Functions — Availity claim validation
+// Same API call pattern as a Logic App connector
+
+const claimId = args[0];
+const apiKey = secrets.availityKey;
+
+const response = await Functions.makeHttpRequest({
+    url: `https://api.availity.com/availity/v1/claims/${claimId}`,
+    method: "GET",
+    headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+    }
+});
+
+// Parse response — same as Data Factory column mapping
+const claimStatus = response.data.status;
+const claimAmount = response.data.amount;
+const payerId = response.data.payerId;
+
+// Return structured data to smart contract
+return Functions.encodeString(JSON.stringify({
+    status: claimStatus,
+    amount: claimAmount,
+    payerId: payerId
+}));
+```
+
+---
+
+## ETL Pipeline — ERA/835 Processing — Phase 4
+
+The ERA (Electronic Remittance Advice) / 835 file is the structured remittance data CMS sends when paying claims. Processing it is a classic ETL problem.
+
+### Extract
+
+| Property | Value |
+|---|---|
+| Source | CMS / Medicaid MCO |
+| Format | ANSI X12 835 transaction set |
+| Transport | SFTP / clearinghouse API |
+| Frequency | Daily batch + real-time |
+
+### Transform
+
+Parse 835 segments:
+
+| Segment | Description |
+|---|---|
+| BPR | Financial information (payment amount) |
+| TRN | Trace number (check/EFT number) |
+| CLP | Claim payment information |
+| SVC | Service payment information |
+
+Extract per claim:
+
+| Field | Action |
+|---|---|
+| Claim ID | Matches on-chain claimId |
+| Payment amount | Validates against claimAmount |
+| Payer ID | Validates against expected payer |
+| Payment date | Triggers repayAdvance() |
+| Adjustment codes | Triggers applyRecoupment() if needed |
+
+### Load
+
+| Property | Value |
+|---|---|
+| Target | Blockchain via Chainlink oracle |
+| Method | Chainlink Functions HTTP request |
+| Trigger | repayAdvance() or applyRecoupment() |
+| Frequency | Real-time per remittance event |
+
+### Azure Data Factory Comparison
+
+| Azure Data Factory | MediChain Pay |
+|---|---|
+| Source Dataset (835 file) | ERA/835 from clearinghouse |
+| Mapping Data Flow | Chainlink Functions parser |
+| Derived Column (835 segments) | BPR, TRN, CLP, SVC extraction |
+| Filter (match claim IDs) | On-chain claimId matching |
+| Sink Dataset (trigger API) | repayAdvance() or applyRecoupment() |
+
+---
+
+## Automation Layer — Phase 4
+
+### Chainlink Automation — The Workflow Engine
+
+Chainlink Automation is the blockchain equivalent of Azure Logic App scheduled triggers or Power Automate flows. It monitors conditions and automatically executes functions when those conditions are met.
+
+### Automation Use Cases
+
+| Use Case | Condition | Action |
+|---|---|---|
+| Automated repayment | CMS remittance detected for Claim X | repayAdvance(X) called automatically |
+| Reserve release | block.timestamp >= advancedAt + 180 days | releaseReserve(X) called automatically |
+| Recoupment monitoring | ERA/835 contains adjustment code CO-4 | applyRecoupment(X, amount) called automatically |
+
+### Power Automate Comparison
+
+| Power Automate | Chainlink Automation |
+|---|---|
+| Trigger: new file in SharePoint | Trigger: block.timestamp condition met |
+| Action: Parse JSON | Action: Parse on-chain state |
+| Action: Call REST API | Action: Call smart contract function |
+| Action: Update database | Action: State written to blockchain |
+
+Same pattern. Different runtime.
+
+---
+
+## Immutable Audit Trail
+
+### Why Blockchain Beats Traditional Audit Logging
+
+| Traditional Audit Log | Blockchain Audit Log |
+|---|---|
+| DBA can alter records | Nobody can alter records |
+| Regulators must trust you | Regulators verify independently |
+| Internal access required | Publicly queryable |
+| Centralized — single point of failure | Distributed — no single point of failure |
+
+### The Audit Trail in Action
+
+Every MediChain Pay transaction is permanently logged in sequence:
+
+```
+Block 32:  ClaimSubmitted(1, 0x5B38..., 5000000000)
+Block 33:  FundsAdvanced(1, 0x5B38..., 4250000000, 250000000)
+Block 36:  AdvanceRepaid(1, 4313750000)
+Block 47:  ReserveReleased(1, 0x5B38..., 250000000)
+```
+
+### Querying Events — Like Azure Log Analytics
+
+```javascript
+// Query blockchain events
+// Equivalent to a KQL query in Azure Log Analytics
+
+const filter = contract.filters.ClaimSubmitted(null, agencyAddress);
+const events = await contract.queryFilter(filter, fromBlock, toBlock);
+
+// KQL equivalent:
+// AuditLog
+// | where AgencyId == "0x5B38..."
+// | order by Timestamp asc
+```
+
+---
+
+## Access Control Architecture
+
+### Role-Based Access Control
+
+MediChain Pay implements RBAC at the smart contract level — equivalent to Azure Active Directory role assignments.
+
+### Current MVP Roles
+
+| Role | Access | Functions |
+|---|---|---|
+| Owner | Full admin | advanceFunds(), repayAdvance(), clawback(), releaseReserve(), applyRecoupment(), withdrawUSDC() |
+| Agency | Submit only | submitClaim() |
+| Public | Read only | getClaimStatus(), getContractBalance() |
+
+### Phase 4 Roles
+
+| Role | Access | Azure Equivalent |
+|---|---|---|
+| Owner | Platform administration | Subscription Owner |
+| Reviewer | Claim approval only | Contributor |
+| Oracle | Automated triggers (Chainlink) | Service Principal |
+| Agency | Submit and view own claims | Reader + scoped write |
+| Auditor | Read-only all data | Reader |
+
+---
+
+## Liquidity Pool Architecture
+
+MediChain Pay operates a liquidity pool — USDC held in the smart contract and used to fund advances.
+
+### Capital Allocation Model
+
+| Component | Formula | Example |
+|---|---|---|
+| Total Pool | USDC in contract | $100,000 |
+| Committed Capital | Sum of active reserves | $12,500 (50 x $250) |
+| Available Capital | Total Pool - Committed | $87,500 |
+| Advance Capacity | Available / advancePercent | ~$102,941 |
+
+### Phase 4 Capital Sources
+
+| Source | Description |
+|---|---|
+| Founder capital | Current — bootstrapped |
+| Institutional DeFi pool | External liquidity providers |
+| Secondary market | Claim advance marketplace |
+| Tokenized pool shares | Investor participation |
+
+---
+
+## Technology Roadmap — Data Architecture View
+
+### Phase 3 — MVP (Current)
+
+| Component | Status |
+|---|---|
+| On-chain data model (Claim struct) | Complete |
+| Event-driven architecture (7 events) | Complete |
+| RBAC — onlyOwner pattern | Complete |
+| Immutable audit trail | Complete |
+| Manual API integration (owner triggers) | Complete |
+| React frontend event subscribers | In progress |
+| Base Sepolia deployment | In progress |
+
+### Phase 4 — Automation
+
+| Component | Status |
+|---|---|
+| Chainlink Functions → Availity API | Planned |
+| ERA/835 ETL pipeline → Chainlink oracle | Planned |
+| Chainlink Automation → repayAdvance() | Planned |
+| Chainlink Automation → releaseReserve() | Planned |
+| Advanced RBAC (Reviewer, Oracle roles) | Planned |
+| Liquidity pool monitoring dashboard | Planned |
+
+### Phase 5 — Scale
+
+| Component | Status |
+|---|---|
+| Multi-payer data feeds | Planned |
+| Institutional liquidity integration | Planned |
+| Secondary market for claim advances | Planned |
+| Cross-chain expansion | Planned |
+| Predictive claim risk scoring (ML pipeline) | Planned |
+
+---
+
+## The Architect's Advantage
+
+Most blockchain developers learn decentralized systems first and enterprise patterns second — if at all.
+
+This platform is built by someone who spent years at Microsoft designing the exact integration patterns that blockchain infrastructure is now replicating:
+
+| Enterprise Experience | Blockchain Application |
+|---|---|
+| Event-driven pipelines | Smart contract events |
+| API integration layers | Chainlink Functions |
+| ETL processing | Oracle data feeds |
+| Workflow automation | Chainlink Automation |
+| Immutable audit logs | Blockchain ledger |
+| Azure RBAC | Smart contract modifiers |
+
+The result is a healthcare payment platform that combines the rigor of enterprise data architecture with the transparency and automation of blockchain infrastructure.
+
+---
+
+*MediChain Pay — Data Architecture Documentation*
+
+*Built on enterprise integration patterns from Microsoft*
+
+*github.com/darnharris37/medichain-pay*
