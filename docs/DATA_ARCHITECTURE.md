@@ -23,6 +23,7 @@ Every architectural decision in MediChain Pay maps directly to a proven enterpri
 
 | Enterprise Pattern | Microsoft Tool | MediChain Pay Equivalent |
 |---|---|---|
+| Customer identity | Azure Active Directory B2C | Auth0 Healthcare CIAM |
 | Event streaming | Azure Event Hub | Smart contract events |
 | API integration | Azure Logic Apps | Chainlink Functions |
 | ETL pipeline | Azure Data Factory | ERA/835 → Oracle feed |
@@ -37,14 +38,108 @@ Every architectural decision in MediChain Pay maps directly to a proven enterpri
 | Service Bus trigger | Azure Service Bus | On-chain event trigger |
 | Retry logic | Logic App retry policy | Chainlink oracle retry |
 | Data validation | Data Factory validation | require() statements |
-| Access control | Azure RBAC | onlyOwner modifier |
+| Access control | Azure RBAC | onlyOwner modifier + Auth0 roles |
 | Monitoring | Azure Monitor | Basescan event logs |
 
 ---
 
-## The On-Chain Data Model
+## System Architecture — 5 Layers
 
-The MediChain Pay on-chain data model was designed with the same principles used in enterprise database architecture — normalized, indexed, and constrained.
+MediChain Pay is organized into 5 distinct architectural layers. Each layer has a clear responsibility and maps to enterprise architecture principles.
+
+| Layer | Responsibility |
+|---|---|
+| Client Layer | What users see and interact with |
+| Identity Layer | Who is allowed in and what they can do (Auth0) |
+| Middleware Layer | How external systems connect |
+| Smart Contract | Where business logic and money live |
+| Blockchain Infra | The foundation everything runs on |
+
+---
+
+## Identity Layer — Auth0 Healthcare CIAM
+
+> New in v1.1 — Auth0 has been added as a dedicated Identity Layer between the Client and Middleware layers.
+
+### What is CIAM?
+
+Customer Identity and Access Management (CIAM) is the enterprise pattern for managing who can access your application and what they can do once inside.
+
+In Microsoft terms this is Azure Active Directory B2C. In MediChain Pay this is Auth0 by Okta — purpose-built for healthcare.
+
+### Why Auth0 for Healthcare
+
+| Requirement | Auth0 Feature |
+|---|---|
+| HIPAA compliance | Business Associate Agreement (BAA) available |
+| Secure login | Universal Login with branding |
+| MFA enforcement | TOTP, SMS, email authenticators |
+| SSO with EHR systems | Connect to Epic, Cerner, Homecare Homebase |
+| Role-based access | Fine-Grained Authorization |
+| Audit trail | Full login and access event logging |
+| Bot protection | Bot detection and attack protection |
+| Session security | Configurable session timeouts |
+| AI agent auth | Secure automated agent identity (Phase 4) |
+
+### Auth0 Role Design
+
+| Auth0 Role | Portal Access | Smart Contract Access |
+|---|---|---|
+| Platform Owner | Full admin dashboard | All onlyOwner functions |
+| Agency Admin | Full agency portal | submitClaim() |
+| Agency Staff | Limited portal view | submitClaim() |
+| Auditor | Read-only dashboard | getClaimStatus() |
+| Reviewer | Claim review only | denySubmittedClaim() |
+
+### Auth0 vs Azure AD B2C
+
+| Feature | Azure AD B2C | Auth0 Healthcare |
+|---|---|---|
+| Healthcare focus | General purpose | Purpose-built for healthcare |
+| HIPAA BAA | Available | Available |
+| SSO providers | Microsoft ecosystem | Epic, Cerner, any SAML/OIDC |
+| Setup complexity | High | Low — developer friendly |
+| Free tier | Limited | 7,500 monthly active users |
+| SMART on FHIR | Manual setup | Built-in support |
+| AI agent auth | Not available | Available (2026) |
+
+### The Updated Authentication Flow
+
+Agency staff visits MediChain Pay portal, Auth0 Universal Login loads, user enters credentials, Auth0 enforces MFA, Auth0 assigns role, JWT token issued, portal loads with role-appropriate views, MetaMask connects for blockchain transactions, smart contract executes with onlyOwner enforced on-chain.
+
+### SSO Integration — Removing Adoption Friction
+
+| Agency Software | SSO Protocol | Auth0 Support |
+|---|---|---|
+| Epic | SAML / OIDC | Supported |
+| Cerner | SAML / OIDC | Supported |
+| Homecare Homebase | SAML | Supported |
+| MatrixCare | SAML | Supported |
+| PointClickCare | SAML / OIDC | Supported |
+
+### Auth0 Actions Engine — Custom KYB Logic
+
+Auth0's Actions engine lets you run custom JavaScript at login — before the user gets in. For MediChain Pay this means you can enforce KYB verification as a login gate:
+
+```javascript
+// Auth0 Action — runs at every login
+// Blocks access if agency KYB is not verified
+
+exports.onExecutePostLogin = async (event, api) => {
+  const kybStatus = event.user.app_metadata?.kybStatus;
+  if (kybStatus !== "verified") {
+    api.access.deny("Agency KYB verification required before accessing MediChain Pay.");
+  }
+};
+```
+
+### AI Agent Authentication — Phase 4
+
+Auth0's 2026 AI agent authentication secures automated system-to-system calls. In Phase 4 when Chainlink oracles call smart contract functions automatically, Auth0 can authenticate those agent calls at the identity layer — adding a security layer that pure blockchain developers almost never think about.
+
+---
+
+## The On-Chain Data Model
 
 ### Claim Entity
 
@@ -69,8 +164,6 @@ The MediChain Pay on-chain data model was designed with the same principles used
 | `claimIds` | UINT256[] | Array of all claim IDs for this agency |
 
 ### Primary Key Pattern
-
-SQL Server and Solidity solve the same problem differently:
 
 ```sql
 -- SQL Server
@@ -128,7 +221,7 @@ MediChain Pay is built on an event-driven architecture — every state change em
 
 | Property | Value |
 |---|---|
-| Source | Agency wallet |
+| Source | Agency wallet (after Auth0 authentication) |
 | Trigger | submitClaim() called |
 | Event | ClaimSubmitted(claimId, agency, claimAmount) |
 | Consumers | Admin dashboard, audit trail, analytics |
@@ -171,8 +264,6 @@ MediChain Pay is built on an event-driven architecture — every state change em
 
 ### Event Schema Design
 
-Events in Solidity are designed with the same principles as Azure Event Hub event schemas — indexed fields for searchability, minimal payload for efficiency.
-
 ```solidity
 // Indexed fields = searchable (like Event Hub partition key)
 // Non-indexed fields = payload data
@@ -192,31 +283,20 @@ event ClaimSubmitted(
 | Consumer Group | Frontend / dashboard subscriber |
 | Processing | UI update / dashboard refresh |
 
-The pattern is identical. The infrastructure is different.
-
 ---
 
 ## API Integration Layer — Phase 4
 
 ### Chainlink Functions — The API Gateway
 
-Chainlink Functions is the blockchain equivalent of Azure API Management combined with Azure Logic Apps. It allows smart contracts to make authenticated HTTP requests to external APIs — exactly like Logic App connectors calling REST APIs.
+**Azure Pattern vs MediChain Pay Pattern**
 
-**Azure Pattern:**
-
-```
-Logic App → API Management → Availity REST API
-        ↓
-Response processed → Service Bus triggered → Downstream processing
-```
-
-**MediChain Pay Pattern:**
-
-```
-Chainlink Functions → Availity REST API
-        ↓
-Response processed → On-chain transaction → Smart contract updated
-```
+| Step | Azure Tool | MediChain Pay Tool |
+|---|---|---|
+| Receive trigger | Logic App trigger | Chainlink automation condition |
+| Call external API | API Management connector | Chainlink Functions HTTP request |
+| Process response | Logic App action | JavaScript handler |
+| Update system | Service Bus message | On-chain transaction |
 
 ### Availity Integration Design
 
@@ -236,12 +316,10 @@ const response = await Functions.makeHttpRequest({
     }
 });
 
-// Parse response — same as Data Factory column mapping
 const claimStatus = response.data.status;
 const claimAmount = response.data.amount;
 const payerId = response.data.payerId;
 
-// Return structured data to smart contract
 return Functions.encodeString(JSON.stringify({
     status: claimStatus,
     amount: claimAmount,
@@ -252,8 +330,6 @@ return Functions.encodeString(JSON.stringify({
 ---
 
 ## ETL Pipeline — ERA/835 Processing — Phase 4
-
-The ERA (Electronic Remittance Advice) / 835 file is the structured remittance data CMS sends when paying claims. Processing it is a classic ETL problem.
 
 ### Extract
 
@@ -266,16 +342,12 @@ The ERA (Electronic Remittance Advice) / 835 file is the structured remittance d
 
 ### Transform
 
-Parse 835 segments:
-
 | Segment | Description |
 |---|---|
 | BPR | Financial information (payment amount) |
 | TRN | Trace number (check/EFT number) |
 | CLP | Claim payment information |
 | SVC | Service payment information |
-
-Extract per claim:
 
 | Field | Action |
 |---|---|
@@ -308,10 +380,6 @@ Extract per claim:
 
 ## Automation Layer — Phase 4
 
-### Chainlink Automation — The Workflow Engine
-
-Chainlink Automation is the blockchain equivalent of Azure Logic App scheduled triggers or Power Automate flows. It monitors conditions and automatically executes functions when those conditions are met.
-
 ### Automation Use Cases
 
 | Use Case | Condition | Action |
@@ -329,8 +397,6 @@ Chainlink Automation is the blockchain equivalent of Azure Logic App scheduled t
 | Action: Call REST API | Action: Call smart contract function |
 | Action: Update database | Action: State written to blockchain |
 
-Same pattern. Different runtime.
-
 ---
 
 ## Immutable Audit Trail
@@ -344,9 +410,14 @@ Same pattern. Different runtime.
 | Internal access required | Publicly queryable |
 | Centralized — single point of failure | Distributed — no single point of failure |
 
-### The Audit Trail in Action
+### Two Audit Trails Working Together
 
-Every MediChain Pay transaction is permanently logged in sequence:
+| Layer | System | What It Logs |
+|---|---|---|
+| Identity | Auth0 | Who logged in, when, from where, what role |
+| Transactions | Blockchain | Every claim, advance, repayment, clawback |
+
+### The Blockchain Audit Trail in Action
 
 ```
 Block 32:  ClaimSubmitted(1, 0x5B38..., 5000000000)
@@ -374,33 +445,35 @@ const events = await contract.queryFilter(filter, fromBlock, toBlock);
 
 ## Access Control Architecture
 
-### Role-Based Access Control
+### Two-Layer RBAC Design
 
-MediChain Pay implements RBAC at the smart contract level — equivalent to Azure Active Directory role assignments.
+| Layer | System | Controls |
+|---|---|---|
+| Application | Auth0 | What pages and features users can see |
+| Blockchain | Smart contract modifiers | What on-chain functions can be called |
 
 ### Current MVP Roles
 
-| Role | Access | Functions |
+| Role | Auth0 Access | Smart Contract Access |
 |---|---|---|
-| Owner | Full admin | advanceFunds(), repayAdvance(), clawback(), releaseReserve(), applyRecoupment(), withdrawUSDC() |
-| Agency | Submit only | submitClaim() |
-| Public | Read only | getClaimStatus(), getContractBalance() |
+| Owner | Full admin dashboard | All onlyOwner functions |
+| Agency Admin | Full agency portal | submitClaim() |
+| Agency Staff | Limited portal view | submitClaim() |
+| Public | None | getClaimStatus(), getContractBalance() |
 
 ### Phase 4 Roles
 
-| Role | Access | Azure Equivalent |
-|---|---|---|
-| Owner | Platform administration | Subscription Owner |
-| Reviewer | Claim approval only | Contributor |
-| Oracle | Automated triggers (Chainlink) | Service Principal |
-| Agency | Submit and view own claims | Reader + scoped write |
-| Auditor | Read-only all data | Reader |
+| Role | Auth0 Access | Smart Contract Access | Azure Equivalent |
+|---|---|---|---|
+| Owner | Platform admin | Full control | Subscription Owner |
+| Reviewer | Claim review only | denySubmittedClaim() | Contributor |
+| Oracle | Automated only | repayAdvance(), releaseReserve() | Service Principal |
+| Agency Admin | Full portal | submitClaim() | Scoped Contributor |
+| Auditor | Read-only all data | getClaimStatus() | Reader |
 
 ---
 
 ## Liquidity Pool Architecture
-
-MediChain Pay operates a liquidity pool — USDC held in the smart contract and used to fund advances.
 
 ### Capital Allocation Model
 
@@ -432,7 +505,7 @@ MediChain Pay operates a liquidity pool — USDC held in the smart contract and 
 | Event-driven architecture (7 events) | Complete |
 | RBAC — onlyOwner pattern | Complete |
 | Immutable audit trail | Complete |
-| Manual API integration (owner triggers) | Complete |
+| Auth0 Healthcare CIAM integration | In progress |
 | React frontend event subscribers | In progress |
 | Base Sepolia deployment | In progress |
 
@@ -444,6 +517,9 @@ MediChain Pay operates a liquidity pool — USDC held in the smart contract and 
 | ERA/835 ETL pipeline → Chainlink oracle | Planned |
 | Chainlink Automation → repayAdvance() | Planned |
 | Chainlink Automation → releaseReserve() | Planned |
+| Auth0 SSO → Epic / Cerner / Homecare Homebase | Planned |
+| Auth0 AI Agent Authentication | Planned |
+| Auth0 Fine-Grained Authorization | Planned |
 | Advanced RBAC (Reviewer, Oracle roles) | Planned |
 | Liquidity pool monitoring dashboard | Planned |
 
@@ -467,14 +543,15 @@ This platform is built by someone who spent years at Microsoft designing the exa
 
 | Enterprise Experience | Blockchain Application |
 |---|---|
+| Azure AD B2C / identity management | Auth0 Healthcare CIAM |
 | Event-driven pipelines | Smart contract events |
 | API integration layers | Chainlink Functions |
 | ETL processing | Oracle data feeds |
 | Workflow automation | Chainlink Automation |
 | Immutable audit logs | Blockchain ledger |
-| Azure RBAC | Smart contract modifiers |
+| Azure RBAC | Smart contract modifiers + Auth0 roles |
 
-The result is a healthcare payment platform that combines the rigor of enterprise data architecture with the transparency and automation of blockchain infrastructure.
+The result is a healthcare payment platform that combines the rigor of enterprise data architecture with the transparency and automation of blockchain infrastructure — and the compliance requirements of the healthcare industry.
 
 ---
 
