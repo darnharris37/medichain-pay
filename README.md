@@ -6,7 +6,10 @@
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.20-363636?logo=solidity)](https://soliditylang.org)
 [![Base Network](https://img.shields.io/badge/Base-Network-0052FF?logo=coinbase)](https://base.org)
 [![USDC](https://img.shields.io/badge/USDC-Circle-2775CA)](https://www.circle.com)
+[![Auth0](https://img.shields.io/badge/Auth0-Healthcare_CIAM-EB5424?logo=auth0)](https://auth0.com/healthcare)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**Live Architecture Diagram:** [darnharris37.github.io/medichain-pay](https://darnharris37.github.io/medichain-pay)
 
 ---
 
@@ -45,6 +48,7 @@ MediChain Pay replaces the factoring company with a smart contract — cheaper, 
 | **Transparency** | Opaque | Full on-chain audit trail |
 | **Minimum size** | Often $10,000+ | $100 |
 | **Availability** | Business hours | 24/7/365 |
+| **HIPAA Compliance** | Varies | Auth0 Healthcare CIAM |
 
 ---
 
@@ -52,50 +56,18 @@ MediChain Pay replaces the factoring company with a smart contract — cheaper, 
 
 ### The Claim Lifecycle
 
-```
-STEP 1 — Agency Submits Claim
-Agency submits verified clean claim via portal
-        ↓
-Smart contract records claim on-chain
-Calculates: 85% advance + 5% reserve + 1.5% fee
-Status → "Submitted"
-
-STEP 2 — Platform Reviews & Approves
-Owner reviews claim via admin dashboard
-Clearinghouse API validates claim eligibility
-        ↓
-advanceFunds() triggered
-Status → "Advanced"
-
-STEP 3 — Agency Receives USDC Instantly
-85% of claim value sent to agency wallet in minutes
-5% reserve held in smart contract escrow
-        ↓
-Agency makes payroll — no lines of credit needed
-
-STEP 4 — CMS Remits Payment (14–90 days later)
-CMS sends ACH remittance to agency bank account
-Agency converts to USDC and authorizes repayment
-        ↓
-repayAdvance() triggered
-Platform collects: advance principal + 1.5% fee
-Status → "Repaid"
-
-STEP 5 — Reserve Released (180 days after advance)
-If no CMS recoupment within 180 days:
-        ↓
-releaseReserve() triggered
-$250 reserve returned to agency
-Status → "Reserve Released"
-
-IF CMS CLAWS BACK — Recoupment Protection
-CMS audits and demands funds back (months later):
-        ↓
-applyRecoupment() triggered
-5% reserve absorbs the loss
-Remaining reserve returned to agency
-Status → "Recoupment Applied"
-```
+| Step | Who | What Happens |
+|---|---|---|
+| 1 | Agency | Logs in via Auth0 — MFA verified |
+| 2 | Auth0 | Role assigned — HIPAA compliant session started |
+| 3 | Agency | Submits verified clean claim via portal |
+| 4 | Clearinghouse | Availity API validates claim eligibility |
+| 5 | Owner | Reviews and approves advance |
+| 6 | Smart Contract | 85% of claim value sent in USDC within minutes |
+| 7 | Smart Contract | 5% reserve held in escrow for 180 days |
+| 8 | CMS | Remits payment to agency (14–90 days later) |
+| 9 | Platform | Collects principal + 1.5% fee |
+| 10 | Smart Contract | Reserve released to agency after 180-day window |
 
 ### The Math on a $5,000 Claim
 
@@ -111,18 +83,46 @@ Status → "Recoupment Applied"
 
 ---
 
+## System Architecture
+
+**5 layers — view the interactive diagram at [darnharris37.github.io/medichain-pay](https://darnharris37.github.io/medichain-pay)**
+
+| Layer | Components |
+|---|---|
+| Client Layer | Agency Portal (React) · MetaMask · Admin Dashboard |
+| Identity Layer | Auth0 Universal Login · MFA · Role Management · HIPAA BAA |
+| Middleware Layer | Availity API · KYB / BAA · Chainlink Oracle · CMS |
+| Smart Contract | MediChainPay.sol · USDC (ERC-20) · Claim Escrow · On-Chain Audit |
+| Blockchain Infra | Base Network · Consensus Layer · Distributed Ledger · Basescan |
+
+---
+
+## Identity & Compliance — Auth0 Healthcare CIAM
+
+Auth0 by Okta provides the HIPAA-compliant identity layer for MediChain Pay — sitting between users and the platform to enforce authentication, authorization, and compliance before any blockchain transaction occurs.
+
+| Auth0 Feature | MediChain Pay Benefit |
+|---|---|
+| Universal Login | Branded login page for all agency users |
+| Multi-Factor Auth | TOTP, SMS, email — required for HIPAA |
+| Single Sign-On | Connect to Epic, Cerner, Homecare Homebase |
+| Role Management | Agency Admin, Staff, Auditor, Owner |
+| HIPAA BAA | Business Associate Agreement available |
+| Fine-Grained Authorization | Granular access control per user |
+| AI Agent Auth | Secure Chainlink oracle identity (Phase 4) |
+| Actions Engine | Custom KYB verification at login |
+
+---
+
 ## Why Blockchain?
 
-A traditional factoring company bridge is built on trust, legal contracts, manual reconciliation, and phone calls to resolve disputes.
-
-The MediChain Pay bridge is built on code:
-
-- **Self-enforcing** — smart contracts execute automatically when conditions are met
-- **Immutable** — no one can alter a transaction after it occurs
-- **Transparent** — every transaction is publicly verifiable on Basescan
-- **Trustless** — agencies don't need to trust a factoring company — they trust the code
-- **Cheap** — Base Network transactions cost fractions of a cent
-- **Always on** — no business hours, no holidays, no delays
+| Traditional Factoring | MediChain Pay |
+|---|---|
+| Enforced by lawyers and trust | Enforced by code — self-executing |
+| Opaque transactions | Every transaction publicly verifiable |
+| Manual reconciliation | Automatic on-chain settlement |
+| Business hours only | 24/7/365 — no downtime |
+| Centralized — single point of failure | Distributed — no single point of failure |
 
 ---
 
@@ -140,31 +140,7 @@ The MediChain Pay bridge is built on code:
 
 ## Smart Contract Architecture
 
-### MediChainPay.sol — The Core Contract
-
-The heart of the platform. Contains all business logic and enforces every rule automatically.
-
-**State Variables**
-```
-owner           — Founder wallet. Only address that can approve advances.
-usdc            — Reference to USDC token contract.
-advancePercent  — 85% (how much of claim gets advanced)
-reservePercent  — 5%  (held as recoupment buffer)
-feeBasisPoints  — 150 (1.5% platform fee)
-reserveWindowDays — 180 (days before reserve is released)
-claimCounter    — Auto-incrementing unique claim ID
-```
-
-**Claim Status Lifecycle**
-```
-Submitted → Advanced → Repaid → ReserveReleased
-                ↓
-            Clawback (CMS denial before repayment)
-                
-Submitted → Denied (rejected before funds move)
-
-Repaid → Recoupment (CMS audit after repayment)
-```
+### MediChainPay.sol — v2.0
 
 **Core Functions**
 
@@ -183,66 +159,48 @@ Repaid → Recoupment (CMS audit after repayment)
 | `updateReserveWindow(days)` | Owner | Adjust reserve window (90–365 days) |
 | `getContractBalance()` | Public | Check available USDC liquidity |
 
+**Claim Status Lifecycle**
+
+| Path | Statuses |
+|---|---|
+| Normal | Submitted → Advanced → Repaid → ReserveReleased |
+| Pre-advance denial | Submitted → Denied |
+| Post-advance denial | Submitted → Advanced → Clawback |
+| CMS audit | Submitted → Advanced → Repaid → Recoupment |
+
 ### MockUSDC.sol — Test Token
 
-A fake USDC token used only in local development. Implements the full ERC-20 standard including `mint()`, `transfer()`, `transferFrom()`, `approve()`, `allowance()`, and `balanceOf()`.
-
-In production this is replaced by real Circle USDC on Base mainnet:
-`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+Used only in local development. Implements the full ERC-20 standard. Replaced by real Circle USDC on Base mainnet: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
 
 ---
 
-## Recoupment Protection — The Key Innovation
+## Recoupment Protection
 
-Traditional factoring companies ignore recoupment risk and simply charge higher fees to compensate. MediChain Pay builds recoupment protection directly into the smart contract.
+Traditional factoring companies ignore recoupment risk and simply charge higher fees. MediChain Pay builds recoupment protection directly into the smart contract.
 
-**What is recoupment?**
-CMS can audit a claim months or even years after paying it. If they determine the claim was improperly billed or documented, they offset (claw back) the payment from future remittances.
-
-**How MediChain Pay handles it:**
-
-```
-Claim repaid ✅
-        ↓
-5% reserve held in escrow for 180 days
-        ↓
-Scenario A — No clawback after 180 days:
-Reserve released back to agency ✅
-
-Scenario B — CMS claws back less than reserve:
-Reserve absorbs the loss ✅
-Remaining reserve returned to agency ✅
-
-Scenario C — CMS claws back more than reserve:
-Reserve absorbs what it can ✅
-Shortfall logged on-chain for collection ✅
-```
+| Scenario | What Happens |
+|---|---|
+| No clawback after 180 days | Full reserve returned to agency |
+| CMS claws back less than reserve | Reserve absorbs loss, remainder returned to agency |
+| CMS claws back more than reserve | Reserve absorbs what it can, shortfall logged for Phase 4 |
 
 ---
 
-## System Architecture
+## Data Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ CLIENT LAYER                                            │
-│  Agency Portal (React)  ·  Admin Dashboard  ·  Basescan│
-└────────────────────────┬────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────┐
-│ MIDDLEWARE LAYER                                        │
-│  Availity API  ·  Chainlink Oracle  ·  KYB / BAA       │
-└────────────────────────┬────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────┐
-│ SMART CONTRACT LAYER                                    │
-│  MediChainPay.sol  ·  USDC (ERC-20)  ·  Claim Escrow  │
-└────────────────────────┬────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────┐
-│ BLOCKCHAIN INFRASTRUCTURE                               │
-│  Base Network  ·  Consensus Layer  ·  Distributed Ledger│
-└─────────────────────────────────────────────────────────┘
-```
+This platform was built by a former Microsoft Data Solutions Architect. Every design decision maps to a proven enterprise pattern.
+
+| Enterprise Pattern | Microsoft Tool | MediChain Pay |
+|---|---|---|
+| Customer identity | Azure AD B2C | Auth0 Healthcare CIAM |
+| Event streaming | Azure Event Hub | Smart contract events |
+| API integration | Azure Logic Apps | Chainlink Functions |
+| ETL pipeline | Azure Data Factory | ERA/835 → Oracle feed |
+| Workflow automation | Power Automate | Chainlink Automation |
+| Immutable audit log | Append-only storage | Blockchain ledger |
+| Access control | Azure RBAC | onlyOwner + Auth0 roles |
+
+Full data architecture documentation: [docs/DATA_ARCHITECTURE.md](docs/DATA_ARCHITECTURE.md)
 
 ---
 
@@ -254,13 +212,17 @@ Shortfall logged on-chain for collection ✅
   - [x] Reserve escrow system — 5% held per claim
   - [x] Recoupment protection — applyRecoupment() and releaseReserve()
   - [x] Full test suite in Remix IDE
+  - [x] Enterprise data architecture documentation
 - [ ] **Phase 3** — MVP frontend
+  - [x] Auth0 Healthcare CIAM — identity layer
   - [ ] React agency portal with MetaMask integration
   - [ ] Admin dashboard for claim review
   - [ ] Deploy to Base Sepolia testnet
 - [ ] **Phase 4** — Production hardening
   - [ ] Clearinghouse integration (Availity / Change Healthcare)
   - [ ] Chainlink oracle for automated repayment
+  - [ ] Auth0 SSO — Epic, Cerner, Homecare Homebase
+  - [ ] Auth0 AI Agent Authentication for Chainlink
   - [ ] HIPAA compliance — BAA agreements
   - [ ] Smart contract audit (Trail of Bits / Sherlock)
   - [ ] KYB onboarding for agencies
@@ -275,13 +237,15 @@ Shortfall logged on-chain for collection ✅
 ## Getting Started
 
 ### Prerequisites
+
 - [MetaMask](https://metamask.io) browser extension
-- [Remix IDE](https://remix.ethereum.org) or local Foundry setup
+- [Remix IDE](https://remix.ethereum.org)
 - Base Sepolia testnet ETH ([faucet](https://docs.base.org/docs/tools/network-faucets/))
 
 ### Local Development in Remix IDE
 
 **Step 1 — Deploy MockUSDC**
+
 ```
 1. Open MockUSDC.sol in Remix
 2. Compile with Solidity ^0.8.20
@@ -290,6 +254,7 @@ Shortfall logged on-chain for collection ✅
 ```
 
 **Step 2 — Deploy MediChainPay**
+
 ```
 1. Open MediChainPay.sol in Remix
 2. Compile with Solidity ^0.8.20
@@ -298,6 +263,7 @@ Shortfall logged on-chain for collection ✅
 ```
 
 **Step 3 — Fund the Contract**
+
 ```
 1. Go to MockUSDC → mint()
 2. _to: MediChainPay contract address
@@ -306,12 +272,14 @@ Shortfall logged on-chain for collection ✅
 ```
 
 **Step 4 — Test the Full Lifecycle**
+
 ```
-submitClaim(5000000000)         — Submit $5,000 claim
-advanceFunds(1)                 — Advance $4,250 to agency
-approve(mediChainPay, 4313750000) — Agency authorizes repayment
-repayAdvance(1)                 — Collect $4,313.75
-releaseReserve(1, true)         — Release $250 reserve (bypass=true for testing)
+submitClaim(5000000000)              Submit $5,000 claim
+advanceFunds(1)                      Advance $4,250 to agency
+approve(mediChainPay, 4313750000)    Agency authorizes repayment
+repayAdvance(1)                      Collect $4,313.75
+releaseReserve(1, true)              Release $250 reserve (bypass=true for testing)
+applyRecoupment(1, 150000000)        Apply $150 CMS clawback against reserve
 ```
 
 ### USDC Amount Reference
@@ -331,6 +299,7 @@ releaseReserve(1, true)         — Release $250 reserve (bypass=true for testin
 
 | Layer | Technology |
 |---|---|
+| Identity & HIPAA | Auth0 Healthcare CIAM (Okta) |
 | Smart Contract | Solidity ^0.8.20 |
 | Blockchain | Base Network (Coinbase L2) |
 | Stablecoin | USDC (Circle ERC-20) |
@@ -342,11 +311,24 @@ releaseReserve(1, true)         — Release $250 reserve (bypass=true for testin
 
 ---
 
+## Documentation
+
+| Document | Description |
+|---|---|
+| [README.md](README.md) | This file — full product overview |
+| [docs/DATA_ARCHITECTURE.md](docs/DATA_ARCHITECTURE.md) | Enterprise data architecture mapped to blockchain |
+| [docs/MediChainArchitecture.jsx](docs/MediChainArchitecture.jsx) | Interactive architecture diagram (React) |
+| [index.html](index.html) | Live architecture diagram — GitHub Pages |
+
+---
+
 ## About The Builder
 
-This project is built by a **home health agency owner with 5+ years of firsthand experience** navigating Medicare and Medicaid payment cycles. The cash flow problem MediChain Pay solves is not theoretical — it was lived daily before becoming the foundation of this platform.
+This project is built by a **home health agency owner and former Microsoft Data Solutions Architect** with 5+ years of firsthand experience navigating Medicare and Medicaid payment cycles.
 
-The combination of deep healthcare domain expertise and blockchain technical development is the core differentiator of this project.
+The cash flow problem MediChain Pay solves is not theoretical — it was lived daily before becoming the foundation of this platform. The enterprise data architecture patterns applied here come from years of building production-grade data pipelines, API integrations, and event-driven systems at Microsoft.
+
+The combination of deep healthcare domain expertise, enterprise architecture experience, and blockchain development is the core differentiator of this project.
 
 ---
 
@@ -356,6 +338,9 @@ MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
+**Live Architecture:** [darnharris37.github.io/medichain-pay](https://darnharris37.github.io/medichain-pay)
+
+**GitHub:** [github.com/darnharris37/medichain-pay](https://github.com/darnharris37/medichain-pay)
+
 *MediChain Pay — Confidential Project in Active Development*
-*Built on firsthand healthcare payment experience*
-*github.com/darnharris37/medichain-pay*
+*Built on firsthand healthcare payment experience and enterprise data architecture*
