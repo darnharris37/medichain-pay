@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediChain Pay — Solution Architecture</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, serif; background: #F0F4F8; padding: 2.5rem 1.5rem; color: #0D2B4E; }
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    /* Header */
+    .header { border-bottom: 3px solid #0D2B4E; padding-bottom: 1.1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+    .header-left .eyebrow { font-size: 0.6rem; letter-spacing: 0.3em; color: #1E6FA3; font-family: monospace; text-transform: uppercase; margin-bottom: 5px; }
+    .header-left h1 { font-size: 2rem; font-weight: 700; color: #0D2B4E; letter-spacing: -0.02em; line-height: 1.1; }
+    .header-left p { font-size: 0.88rem; color: #4A6A8A; margin-top: 4px; font-style: italic; }
+    .header-right .badge { background: #0D2B4E; color: white; padding: 5px 12px; border-radius: 4px; font-size: 0.68rem; font-family: monospace; letter-spacing: 0.06em; }
+    .header-right .version { font-size: 0.6rem; color: #9aaabb; font-family: monospace; margin-top: 4px; }
+
+    /* Auth0 Banner */
+    .auth0-banner { background: #F0FFF8; border: 1px solid #0F6B4A; border-left: 4px solid #0F6B4A; border-radius: 4px; padding: 10px 16px; margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .auth0-banner .title { font-size: 0.78rem; font-weight: 700; color: #0F6B4A; }
+    .auth0-banner .subtitle { font-size: 0.68rem; color: #4A6A8A; font-family: monospace; margin-top: 2px; }
+
+    /* Section Label */
+    .section-label { font-size: 0.58rem; letter-spacing: 0.22em; color: #8A9BB0; font-family: monospace; text-transform: uppercase; margin-bottom: 8px; }
+
+    /* Band / Layer */
+    .band { display: flex; min-height: 90px; margin-bottom: 1px; }
+    .band-label { width: 96px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px 6px; border-radius: 4px 0 0 4px; }
+    .band-label .name { color: white; font-size: 0.65rem; font-weight: 700; font-family: monospace; letter-spacing: 0.08em; text-transform: uppercase; text-align: center; line-height: 1.35; }
+    .band-label .sub { color: rgba(255,255,255,0.55); font-size: 0.56rem; font-family: monospace; text-align: center; margin-top: 4px; line-height: 1.3; }
+    .band-content { flex: 1; border: 1px solid #B8CDE0; border-left: none; border-radius: 0 4px 4px 0; display: flex; align-items: center; padding: 12px 16px; gap: 0; overflow-x: auto; }
+
+    /* Box / Component */
+    .box { width: 118px; background: white; border: 1px solid #B8CDE0; border-radius: 4px; padding: 10px 8px 9px; display: flex; flex-direction: column; align-items: center; gap: 5px; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.07); text-align: center; }
+    .box.highlight { background: #F0FFF8; border-color: #0F6B4A; box-shadow: 0 2px 8px rgba(15,107,74,0.2); }
+    .box .icon { font-size: 1.4rem; line-height: 1; }
+    .box img { width: 26px; height: 26px; object-fit: contain; }
+    .box .title { font-size: 0.72rem; font-weight: 700; color: #0D2B4E; line-height: 1.25; font-family: Georgia, serif; }
+    .box .subtitle { font-size: 0.6rem; color: #4A6A8A; font-family: monospace; margin-top: 3px; line-height: 1.3; }
+    .box .tag { font-size: 0.55rem; font-family: monospace; font-weight: 700; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.05em; }
+    .box .new-badge { font-size: 0.5rem; font-family: monospace; font-weight: 700; background: rgba(15,107,74,0.1); color: #0F6B4A; padding: 1px 6px; border-radius: 3px; }
+
+    /* Arrow */
+    .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; gap: 3px; padding: 0 2px; }
+    .arrow .label { font-size: 0.58rem; color: #4A6A8A; font-family: monospace; text-align: center; max-width: 52px; }
+    .arrow .line-wrap { display: flex; align-items: center; }
+    .arrow .line { width: 22px; height: 1.5px; background: #B8CDE0; }
+    .arrow .head { width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid #B8CDE0; }
+
+    /* Vertical arrows row */
+    .v-arrows { display: flex; padding-left: 96px; }
+    .v-arrow-cell { display: flex; justify-content: center; flex-shrink: 0; }
+    .v-arrow { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 2px 0; }
+    .v-arrow .vline { width: 1.5px; height: 20px; background: #B8CDE0; }
+    .v-arrow .vhead { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid #B8CDE0; }
+
+    /* Flow steps */
+    .flow-wrap { background: white; border: 1px solid #B8CDE0; border-radius: 6px; padding: 16px 20px; display: flex; align-items: flex-start; overflow-x: auto; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 1.4rem; }
+    .step { display: flex; align-items: center; }
+    .step-inner { text-align: center; width: 96px; flex-shrink: 0; }
+    .step-circle { width: 28px; height: 28px; border-radius: 50%; background: #0D2B4E; color: white; font-size: 0.7rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; justify-content: center; margin: 0 auto 5px; }
+    .step-label { font-size: 0.68rem; color: #0D2B4E; line-height: 1.35; font-family: Georgia, serif; font-weight: 500; }
+    .step-arrow { display: flex; align-items: center; margin: 0 4px; flex-shrink: 0; }
+    .step-arrow .sl { width: 18px; height: 1.5px; background: #B8CDE0; }
+    .step-arrow .sh { width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid #B8CDE0; }
+
+    /* Auth0 features grid */
+    .auth0-features { background: #F0FFF8; border: 1px solid #0F6B4A; border-radius: 6px; padding: 1.1rem 1.25rem; margin-bottom: 1.4rem; }
+    .auth0-features .heading { font-size: 0.62rem; letter-spacing: 0.2em; color: #0F6B4A; font-family: monospace; text-transform: uppercase; margin-bottom: 0.85rem; font-weight: 700; }
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; }
+    .feature-card { background: white; border: 1px solid #B8E8D0; border-radius: 4px; padding: 0.75rem; }
+    .feature-card .f-title { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; font-size: 0.75rem; font-weight: 700; color: #0F6B4A; }
+    .feature-card .f-desc { font-size: 0.65rem; color: #4A6A8A; font-family: monospace; line-height: 1.4; }
+
+    /* Metrics */
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 1.5rem; }
+    .metric { border-radius: 4px; padding: 12px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .metric .value { font-size: 1.5rem; font-weight: 700; color: white; line-height: 1; margin-bottom: 4px; }
+    .metric .label { font-size: 0.6rem; color: rgba(255,255,255,0.5); letter-spacing: 0.12em; font-family: monospace; text-transform: uppercase; }
+
+    /* Tech stack */
+    .tech-stack { background: white; border: 1px solid #B8CDE0; border-radius: 6px; padding: 12px 16px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 1.4rem; }
+    .tech-stack .label { font-size: 0.6rem; letter-spacing: 0.18em; color: #8A9BB0; font-family: monospace; text-transform: uppercase; flex-shrink: 0; }
+    .tech-item { display: flex; align-items: center; gap: 5px; }
+    .tech-item img { width: 18px; height: 18px; object-fit: contain; }
+    .tech-item span { font-size: 0.72rem; color: #0D2B4E; font-family: monospace; font-weight: 600; }
+
+    /* Footer */
+    .footer { border-top: 1px solid #B8CDE0; padding-top: 10px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+    .footer span { font-size: 0.62rem; color: #A0B4C5; font-family: monospace; }
+
+    /* Divider */
+    .divider { border-top: 1px solid #B8CDE0; margin: 1.6rem 0 1.1rem; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="eyebrow">Solution Architecture — Confidential</div>
+      <h1>MediChain Pay</h1>
+      <p>Blockchain-Powered Medicare &amp; Medicaid Payment Acceleration</p>
+    </div>
+    <div class="header-right">
+      <div class="badge">Solidity · Base Network · USDC · Auth0</div>
+      <div class="version">v1.1 — 2026 · github.com/darnharris37/medichain-pay</div>
+    </div>
+  </div>
+
+  <!-- Auth0 Banner -->
+  <div class="auth0-banner">
+    <span style="font-size:1.6rem">🔐</span>
+    <div>
+      <div class="title">Auth0 Healthcare CIAM — Newly Integrated</div>
+      <div class="subtitle">HIPAA-compliant identity layer · MFA · SSO · Fine-Grained Authorization · Business Associate Agreement (BAA)</div>
+    </div>
+  </div>
+
+  <!-- Section Label -->
+  <div class="section-label">Component Architecture</div>
+
+  <!-- LAYER 1 — CLIENT -->
+  <div class="band">
+    <div class="band-label" style="background:#0D2B4E">
+      <div class="name">Client Layer</div>
+      <div class="sub">User Interfaces</div>
+    </div>
+    <div class="band-content" style="background:#F0F5FA">
+      <div class="box">
+        <div class="icon">🏠</div>
+        <div class="title">Home Health Agency</div>
+        <div class="subtitle">Claim submitter</div>
+        <span class="tag" style="background:rgba(26,74,138,0.1);color:#1A4A8A">Customer</span>
+      </div>
+      <div class="arrow"><div class="label">HTTPS</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#61DAFB">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg" alt="React" onerror="this.style.display='none'">
+        <div class="title">Agency Portal</div>
+        <div class="subtitle">React · Web3.js</div>
+        <span class="tag" style="background:rgba(97,218,251,0.1);color:#61DAFB">React</span>
+      </div>
+      <div class="arrow"><div class="label">Signs tx</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#F6851B">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" alt="MetaMask" onerror="this.style.display='none'">
+        <div class="title">MetaMask</div>
+        <div class="subtitle">Wallet · Signing</div>
+        <span class="tag" style="background:rgba(246,133,27,0.1);color:#F6851B">Web3</span>
+      </div>
+      <div class="arrow"><div class="label">Reviews</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#1A4A8A">
+        <div class="icon">⚙️</div>
+        <div class="title">Admin Dashboard</div>
+        <div class="subtitle">Owner interface</div>
+        <span class="tag" style="background:rgba(26,74,138,0.1);color:#1A4A8A">Internal</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vertical arrows -->
+  <div class="v-arrows">
+    <div class="v-arrow-cell" style="width:138px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+  </div>
+
+  <!-- LAYER 2 — IDENTITY -->
+  <div class="band">
+    <div class="band-label" style="background:#0F6B4A">
+      <div class="name">Identity Layer</div>
+      <div class="sub">Auth0 CIAM</div>
+    </div>
+    <div class="band-content" style="background:#F0FFF8">
+      <div class="box highlight" style="border-top-color:#0F6B4A">
+        <div class="icon">🔐</div>
+        <div class="title">Auth0 Login</div>
+        <div class="subtitle">Universal Login · SSO</div>
+        <span class="tag" style="background:rgba(15,107,74,0.1);color:#0F6B4A">CIAM</span>
+        <span class="new-badge">NEW</span>
+      </div>
+      <div class="arrow"><div class="label">Verifies</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box highlight" style="border-top-color:#0F6B4A">
+        <div class="icon">🔑</div>
+        <div class="title">Multi-Factor Auth</div>
+        <div class="subtitle">TOTP · SMS · Email</div>
+        <span class="tag" style="background:rgba(15,107,74,0.1);color:#0F6B4A">MFA</span>
+        <span class="new-badge">NEW</span>
+      </div>
+      <div class="arrow"><div class="label">Assigns</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box highlight" style="border-top-color:#0F6B4A">
+        <div class="icon">👤</div>
+        <div class="title">Role Management</div>
+        <div class="subtitle">Agency · Admin · Auditor</div>
+        <span class="tag" style="background:rgba(15,107,74,0.1);color:#0F6B4A">RBAC</span>
+        <span class="new-badge">NEW</span>
+      </div>
+      <div class="arrow"><div class="label">HIPAA</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box highlight" style="border-top-color:#0F6B4A">
+        <div class="icon">📋</div>
+        <div class="title">BAA / Compliance</div>
+        <div class="subtitle">HIPAA · SMART on FHIR</div>
+        <span class="tag" style="background:rgba(15,107,74,0.1);color:#0F6B4A">Compliance</span>
+        <span class="new-badge">NEW</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vertical arrows -->
+  <div class="v-arrows">
+    <div class="v-arrow-cell" style="width:138px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+  </div>
+
+  <!-- LAYER 3 — MIDDLEWARE -->
+  <div class="band">
+    <div class="band-label" style="background:#1A4A8A">
+      <div class="name">Middleware</div>
+      <div class="sub">Integration & APIs</div>
+    </div>
+    <div class="band-content" style="background:#EBF4F8">
+      <div class="box" style="border-top-color:#1E6FA3">
+        <div class="icon">🔗</div>
+        <div class="title">Availity API</div>
+        <div class="subtitle">Claim validation · ERA</div>
+        <span class="tag" style="background:rgba(30,111,163,0.1);color:#1E6FA3">REST</span>
+      </div>
+      <div class="arrow"><div class="label">Validates</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#1E6FA3">
+        <div class="icon">🛡️</div>
+        <div class="title">KYB / BAA</div>
+        <div class="subtitle">Agency onboarding</div>
+        <span class="tag" style="background:rgba(30,111,163,0.1);color:#1E6FA3">Legal</span>
+      </div>
+      <div class="arrow"><div class="label">Triggers</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#375BD2">
+        <img src="https://cryptologos.cc/logos/chainlink-link-logo.svg?v=035" alt="Chainlink" onerror="this.style.display='none'">
+        <div class="title">Chainlink Oracle</div>
+        <div class="subtitle">Automated repayment</div>
+        <span class="tag" style="background:rgba(55,91,210,0.1);color:#375BD2">Oracle</span>
+      </div>
+      <div class="arrow"><div class="label">ERA / 835</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#1A4A8A">
+        <div class="icon">🏛️</div>
+        <div class="title">CMS / Medicaid</div>
+        <div class="subtitle">Payer remittance</div>
+        <span class="tag" style="background:rgba(26,74,138,0.1);color:#1A4A8A">Federal</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vertical arrows -->
+  <div class="v-arrows">
+    <div class="v-arrow-cell" style="width:138px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+  </div>
+
+  <!-- LAYER 4 — SMART CONTRACT -->
+  <div class="band">
+    <div class="band-label" style="background:#0F7B8C">
+      <div class="name">Smart Contract</div>
+      <div class="sub">On-Chain Logic</div>
+    </div>
+    <div class="band-content" style="background:#E8F2EE">
+      <div class="box" style="border-top-color:#627EEA">
+        <img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=035" alt="Solidity" onerror="this.style.display='none'">
+        <div class="title">MediChainPay.sol</div>
+        <div class="subtitle">Solidity · Escrow</div>
+        <span class="tag" style="background:rgba(98,126,234,0.1);color:#627EEA">Solidity</span>
+      </div>
+      <div class="arrow"><div class="label">Advances</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#2775CA">
+        <img src="https://cryptologos.cc/logos/usd-coin-usdc-logo.svg?v=035" alt="USDC" onerror="this.style.display='none'">
+        <div class="title">USDC Token</div>
+        <div class="subtitle">ERC-20 · Circle</div>
+        <span class="tag" style="background:rgba(39,117,202,0.1);color:#2775CA">ERC-20</span>
+      </div>
+      <div class="arrow"><div class="label">Emits events</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#0F7B8C">
+        <div class="icon">📋</div>
+        <div class="title">Claim Escrow</div>
+        <div class="subtitle">Reserve · Clawback</div>
+        <span class="tag" style="background:rgba(15,123,140,0.1);color:#0F7B8C">State</span>
+      </div>
+      <div class="arrow"><div class="label">Logged</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#0F7B8C">
+        <div class="icon">📊</div>
+        <div class="title">On-Chain Audit</div>
+        <div class="subtitle">Immutable ledger</div>
+        <span class="tag" style="background:rgba(15,123,140,0.1);color:#0F7B8C">Compliance</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vertical arrows -->
+  <div class="v-arrows">
+    <div class="v-arrow-cell" style="width:138px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+    <div class="v-arrow-cell" style="width:48px"></div>
+    <div class="v-arrow-cell" style="width:130px"><div class="v-arrow"><div class="vline"></div><div class="vhead"></div></div></div>
+  </div>
+
+  <!-- LAYER 5 — BLOCKCHAIN INFRA -->
+  <div class="band">
+    <div class="band-label" style="background:#0D4A7A">
+      <div class="name">Blockchain Infra</div>
+      <div class="sub">Base Network · L2</div>
+    </div>
+    <div class="band-content" style="background:#F5F0EB">
+      <div class="box" style="border-top-color:#0052FF">
+        <img src="https://raw.githubusercontent.com/base-org/brand-kit/001c0e9b40a67799ebe0418671ac4e02a0c683ce/logo/in-product/Base_Network_Logo.svg" alt="Base" onerror="this.style.display='none'">
+        <div class="title">Base Network</div>
+        <div class="subtitle">Coinbase L2 · EVM</div>
+        <span class="tag" style="background:rgba(0,82,255,0.1);color:#0052FF">L2</span>
+      </div>
+      <div class="arrow"><div class="label">Confirms</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#0D4A7A">
+        <div class="icon">🔗</div>
+        <div class="title">Consensus Layer</div>
+        <div class="subtitle">Block validation</div>
+        <span class="tag" style="background:rgba(13,74,122,0.1);color:#0D4A7A">PoS</span>
+      </div>
+      <div class="arrow"><div class="label">Distributed</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#0D4A7A">
+        <div class="icon">💾</div>
+        <div class="title">Distributed Ledger</div>
+        <div class="subtitle">Permanent state</div>
+        <span class="tag" style="background:rgba(13,74,122,0.1);color:#0D4A7A">Immutable</span>
+      </div>
+      <div class="arrow"><div class="label">Indexed</div><div class="line-wrap"><div class="line"></div><div class="head"></div></div></div>
+      <div class="box" style="border-top-color:#0052FF">
+        <img src="https://raw.githubusercontent.com/base-org/brand-kit/001c0e9b40a67799ebe0418671ac4e02a0c683ce/logo/in-product/Base_Network_Logo.svg" alt="Basescan" onerror="this.style.display='none'">
+        <div class="title">Basescan</div>
+        <div class="subtitle">Block explorer</div>
+        <span class="tag" style="background:rgba(0,82,255,0.1);color:#0052FF">Explorer</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Flow Steps -->
+  <div class="section-label">End-to-End Claim Lifecycle</div>
+  <div class="flow-wrap">
+    <div class="step"><div class="step-inner"><div class="step-circle">01</div><div class="step-label">Agency logs in via Auth0</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">02</div><div class="step-label">MFA verified</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">03</div><div class="step-label">Claim submitted</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">04</div><div class="step-label">Clearinghouse validates</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">05</div><div class="step-label">Owner approves</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">06</div><div class="step-label">85% USDC advanced</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">07</div><div class="step-label">5% held in escrow</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">08</div><div class="step-label">CMS remits</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">09</div><div class="step-label">Principal + fee collected</div></div><div class="step-arrow"><div class="sl"></div><div class="sh"></div></div></div>
+    <div class="step"><div class="step-inner"><div class="step-circle">10</div><div class="step-label">Reserve released 180d</div></div></div>
+  </div>
+
+  <!-- Auth0 Features -->
+  <div class="auth0-features">
+    <div class="heading">Auth0 Healthcare CIAM — Feature Breakdown</div>
+    <div class="features-grid">
+      <div class="feature-card"><div class="f-title"><span>🔐</span> Universal Login</div><div class="f-desc">Branded login page for all agency users</div></div>
+      <div class="feature-card"><div class="f-title"><span>📱</span> Multi-Factor Auth</div><div class="f-desc">TOTP, SMS, email — required for HIPAA</div></div>
+      <div class="feature-card"><div class="f-title"><span>🔄</span> Single Sign-On</div><div class="f-desc">Connect to Epic, Cerner, Homecare Homebase</div></div>
+      <div class="feature-card"><div class="f-title"><span>👥</span> Role Management</div><div class="f-desc">Agency Admin, Staff, Auditor, Owner</div></div>
+      <div class="feature-card"><div class="f-title"><span>📋</span> HIPAA BAA</div><div class="f-desc">Business Associate Agreement available</div></div>
+      <div class="feature-card"><div class="f-title"><span>🤖</span> AI Agent Auth</div><div class="f-desc">Secure automated agent identity (Phase 4)</div></div>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="metric" style="background:#0D2B4E"><div class="value">85%</div><div class="label">Advance Rate</div></div>
+    <div class="metric" style="background:#0D2B4E"><div class="value">5%</div><div class="label">Reserve Escrow</div></div>
+    <div class="metric" style="background:#0D2B4E"><div class="value">1.5%</div><div class="label">Platform Fee</div></div>
+    <div class="metric" style="background:#0D2B4E"><div class="value">180d</div><div class="label">Reserve Window</div></div>
+    <div class="metric" style="background:#0F6B4A"><div class="value">HIPAA</div><div class="label">Auth0 Compliant</div></div>
+  </div>
+
+  <!-- Tech Stack -->
+  <div class="tech-stack">
+    <div class="label">Tech Stack</div>
+    <div class="tech-item"><span>🔐</span><span>Auth0</span></div>
+    <div class="tech-item"><img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=035" alt="Solidity" onerror="this.style.display='none'"><span>Solidity</span></div>
+    <div class="tech-item"><img src="https://raw.githubusercontent.com/base-org/brand-kit/001c0e9b40a67799ebe0418671ac4e02a0c683ce/logo/in-product/Base_Network_Logo.svg" alt="Base" onerror="this.style.display='none'"><span>Base Network</span></div>
+    <div class="tech-item"><img src="https://cryptologos.cc/logos/usd-coin-usdc-logo.svg?v=035" alt="USDC" onerror="this.style.display='none'"><span>USDC</span></div>
+    <div class="tech-item"><img src="https://cryptologos.cc/logos/chainlink-link-logo.svg?v=035" alt="Chainlink" onerror="this.style.display='none'"><span>Chainlink</span></div>
+    <div class="tech-item"><img src="https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg" alt="React" onerror="this.style.display='none'"><span>React</span></div>
+    <div class="tech-item"><img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" alt="MetaMask" onerror="this.style.display='none'"><span>MetaMask</span></div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>MediChain Pay — Confidential Project Roadmap · Built by a Home Health Agency Owner</span>
+    <span>github.com/darnharris37/medichain-pay</span>
+  </div>
+
+</div>
+</body>
+</html>
